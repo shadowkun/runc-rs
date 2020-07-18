@@ -54,6 +54,7 @@ fn main() {
             let r = libc::unshare(libc::CLONE_NEWNS | libc::CLONE_NEWNET);
             assert_eq!(r, 0);
 
+            // 切换根文件系统
             let r = ffi::pivot_root(new_root.as_ptr(), old_root.as_ptr());
             assert_eq!(r, 0);
 
@@ -81,9 +82,10 @@ fn main() {
             assert_eq!(r, 0);
 
             // 防止umount事件扩散到宿主环境
+            let old_root_2 = CString::new("/.old_root").unwrap();
             let r = libc::mount(
                 CString::new("").unwrap().as_ptr(),
-                CString::new("/.old_root").unwrap().as_ptr(),
+                old_root_2.as_ptr(),
                 CString::new("").unwrap().as_ptr(),
                 libc::MS_SLAVE | libc::MS_REC,
                 CString::new("").unwrap().as_ptr() as *const _,
@@ -91,7 +93,6 @@ fn main() {
             assert_eq!(r, 0);
 
             // umount /.old_root
-            let old_root_2 = CString::new("/.old_root").unwrap();
             let r = libc::umount2(old_root_2.as_ptr(), libc::MNT_DETACH);
             assert_eq!(r, 0);
 
