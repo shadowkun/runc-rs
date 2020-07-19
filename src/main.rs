@@ -71,6 +71,16 @@ fn main() {
             );
             assert_eq!(r, 0);
 
+            // 挂载/sys
+            let r = libc::mount(
+                CString::new("").unwrap().as_ptr(),
+                CString::new("/sys").unwrap().as_ptr(),
+                CString::new("sysfs").unwrap().as_ptr(),
+                libc::MS_NOEXEC | libc::MS_NOSUID | libc::MS_NODEV,
+                CString::new("").unwrap().as_ptr() as *const _,
+            );
+            assert_eq!(r, 0);
+
             // 挂载/dev
             let r = libc::mount(
                 CString::new("").unwrap().as_ptr(),
