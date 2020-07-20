@@ -1,11 +1,14 @@
+mod network;
+
 use std::ffi::CString;
 use std::ptr;
 
-fn main() {
+fn main() -> Result<()> {
     let mut args = std::env::args();
 
     let _ = args.next().unwrap();
     let image_fs = args.next().unwrap(); // 镜像文件系统，提前解压
+    let ip = args.next().unwrap(); // 容器ip
     let command = args.next().unwrap(); // 要运行的容器命令
 
     // 运行容器命令的参数列表
@@ -29,7 +32,16 @@ fn main() {
     let new_root = CString::new(image_fs.to_str().unwrap()).unwrap();
     let old_root = CString::new(image_fs.join(".old_root").to_str().unwrap()).unwrap();
 
+    // 初始化网桥
+    network::init_bridge()?;
+
     unsafe {
+        // 创建管道通信
+        let mut pipes: [libc::c_int; 2] = [0; 2];
+        let r = libc::pipe(pipes.as_mut_ptr());
+        assert_eq!(r, 0);
+        let (pipe_r, pipe_w) = (pipes[0], pipes[1]);
+
         let r = libc::unshare(libc::CLONE_NEWPID);
         assert_eq!(r, 0);
 
@@ -53,6 +65,11 @@ fn main() {
             // unshare新命名空间
             let r = libc::unshare(libc::CLONE_NEWNS | libc::CLONE_NEWNET);
             assert_eq!(r, 0);
+
+            // 发送同步信号
+            libc::close(pipe_r);
+            let r = libc::write(pipe_w, [0u8].as_ptr() as *const _, 1);
+            assert_eq!(r, 1);
 
             // 切换根文件系统
             let r = ffi::pivot_root(new_root.as_ptr(), old_root.as_ptr());
@@ -116,6 +133,23 @@ fn main() {
             );
             unreachable!();
         } else {
+            // 接收同步信号
+            let r = libc::read(pipe_r, [0u8].as_mut_ptr() as *mut _, 1);
+            assert_eq!(r, 1);
+
+            // 获取子进程网络命名空间
+            let sub_net_ns = network::find_ns_net(pid)?;
+            // 添加进netns
+            network::put_netns(pid, sub_net_ns.as_str())?;
+            // 创建虚拟设备对
+            let (veth0, veth1) = network::create_veth()?;
+            // 添加进子进程网络命名空间
+            network::link_veth_to_ns(veth1.as_str(), sub_net_ns.as_str(), ip.as_str())?;
+            // 连接网桥
+            network::link_veth_to_bridge(veth0.as_str())?;
+            // 释放netns
+            network::release_netns(sub_net_ns.as_str())?;
+
             // parent process
             let _ = libc::wait4(
                 pid,
@@ -128,6 +162,7 @@ fn main() {
             libc::umount(new_root.as_ptr());
         }
     }
+    Ok(())
 }
 
 mod ffi {
@@ -138,3 +173,5 @@ mod ffi {
         ) -> libc::c_int;
     }
 }
+
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + 'static>>;
